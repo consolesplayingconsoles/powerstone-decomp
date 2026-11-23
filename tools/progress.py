@@ -209,82 +209,85 @@ if os.path.exists('model-map/game.dcgs'):
     if re_rows:
         rows += [('GAME ASSETS (EXTRA)', '', 'reverse engineering: what the model map identifies; it does not affect the measures above and is not done work')]
         rows += [row for n, row in re_rows]
+# the badge below is the skill's (v3): its names for what this older progress.py counts as done. Verified library code is done work here,
+# none of it is left out of the count, and there is only the equivalent mode
+unbuilt = set()
+lib_done = verified
+MATCHING = False
+
+
 def write_badge(rows, label, path='badges/progress.svg', extra=()):
-    """badge.svg beside the README, two rows in Pluto's colours: functions (a bar filled to the main metric, "done: ...", and its
-    percentage) and bytes (the game's code laid out by bytes, data left out, one column per slice, dark where most of the slice is
-    done, light where it is not, and the share of code bytes done). The same two colours mean done and not yet in both rows, and
-    the numbers are always printed."""
+    """badge.svg beside the README, in Pluto's colours. The main metrics, large: covered functions (a bar filled to the main metric
+    and its percentage) and covered bytes (the game's code laid out by bytes, data left out, one column per slice, dark where most of
+    the slice is done, light where it is not, and the share of code bytes done). The same two colours mean done and not yet in both
+    rows, and the numbers are always printed. The secondary metrics, small: test coverage and the matching percentage. Below them,
+    the statuses that have a Flycast, a Dreamcast and a Native column, as grid_columns() gives them (extra: (the shown columns'
+    headings, [(name, [their marks])])), one check per status in each shown column."""
     done = float(pct(g[7], doable).strip().rstrip('%')) if doable else 0.0      # the same number the 'done: equivalent C' row used to carry, straight from the counts
     bar = 100
     wd = int(round(bar * min(done, 100.0) / 100.0))
     if done > 0 and wd < 2:
         wd = 2
-    code_total = sum(sz for _, sz, n in funcs if n not in nocform) or 1
+    code_total = sum(sz for _, sz, n in funcs if n not in nocform and n not in unbuilt) or 1
     dark = [0] * bar
-    mruns = []                                     # the same layout, byte-matched code only (inside a C unit the build rebuilds): exact runs,
-                                                   # since matched units are small and scattered, a slice is rarely mostly matched
-    pos = done_bytes = matched_bytes = 0
-    for fa, fsz, fn in sorted(x for x in funcs if x[2] not in nocform):
-        matched = in_c(fa)
-        if matched or fn in equivalent or fn in verified:
+    pos = done_bytes = 0
+    for fa, fsz, fn in sorted(x for x in funcs if x[2] not in nocform and x[2] not in unbuilt):
+        if in_c(fa) or fn in equivalent or fn in lib_done:
             done_bytes += fsz
             for b in range(pos, pos + fsz):
                 dark[min(bar - 1, b * bar // code_total)] += 1
-        if matched:
-            matched_bytes += fsz
-            if mruns and mruns[-1][1] == pos:
-                mruns[-1][1] = pos + fsz
-            else:
-                mruns.append([pos, pos + fsz])
         pos += fsz
-    X = 150                                        # the bars start here; the label column is wide enough for "Min. accuracy"
+    # the card: four equal margins (M), the labels on the left edge, the figures on the right edge, the bars between them
+    W, M = 320, 12
+    Y1 = M + 10                                    # the first row's baseline: its bar (10 high) starts at the top margin
+    Y2 = Y1 + 32                                   # the second row's baseline
+    X = 156                                        # the bars start here: after the widest label, and 9 before the figure at the right edge
     per = float(code_total) / bar
-
-    def slices(cols, y):
-        """a strip: light, with a dark run wherever most of a slice of the code counts"""
-        runs, c = [], 0
-        while c < bar:
-            on = cols[c] * 2 > per
-            e = c
-            while e < bar and (cols[e] * 2 > per) == on:
-                e += 1
-            if on:
-                runs.append('<rect x="%d" y="%d" width="%d" height="8" fill="#c87053"/>' % (X + c, y, e - c))
-            c = e
-        return '<rect x="%d" y="%d" width="%d" height="8" fill="#ecc9b9"/>%s' % (X, y, bar, ''.join(runs))
-    strip = slices(dark, 46) + '<rect x="%d" y="66" width="%d" height="8" fill="#ecc9b9"/>%s' % (X, bar, ''.join(
-        '<rect x="%.2f" y="66" width="%.2f" height="8" fill="#c87053"/>' % (X + s * float(bar) / code_total,
-                                                                          (e - s) * float(bar) / code_total)
-        for s, e in mruns))
+    runs, c = [], 0
+    while c < bar:
+        on = dark[c] * 2 > per
+        e = c
+        while e < bar and (dark[e] * 2 > per) == on:
+            e += 1
+        if on:
+            runs.append('<rect x="%d" y="%d" width="%d" height="10" fill="#c87053"/>' % (X + c, Y2 - 10, e - c))
+        c = e
+    strip = '<rect x="%d" y="%d" width="%d" height="10" fill="#ecc9b9"/>%s' % (X, Y2 - 10, bar, ''.join(runs))
     ftext = '%.1f%%' % done
     btext = '%.1f%%' % (100.0 * done_bytes / code_total)
-    mtext = '%.1f%%' % (100.0 * matched_bytes / code_total)
     gtext = '%.1f%%' % wavg
-    title = ('%s: %s of functions, %s of code bytes done (%s byte-matched); the total test coverage over all of them is %s'
-             % (label, ftext, btext, mtext, gtext))
-    # extra: (the shown columns' headings, [(status, [its mark in each shown column])]), from grid_columns(): under the metrics, a grid
-    # with one check per status in each column that builds from C
+    mtext = pct(g[3], doable).strip()
+    if MATCHING:
+        _w = 'MATCHED'
+        title = '%s: %s of functions, %s of code bytes matched' % (label, ftext, btext)
+    else:
+        _w = 'COVERED'
+        title = '%s: %s of functions, %s of code bytes covered; test coverage %s, matching %s' % (label, ftext, btext, gtext, mtext)
+    Y3 = Y2 + 26                                   # the secondary metrics' baseline
+    last = Y2 if MATCHING else Y3                  # the baseline of the last line so far; the bottom edge is 15 below it (3 of descender, then M)
+    sec = '' if MATCHING else ('<g font-size="10" fill="#b8c4d9"><text x="%d" y="%d" text-anchor="start">TEST COVERAGE %%s</text>'
+                               '<text x="%d" y="%d" text-anchor="end">MATCHING %%s</text></g>' % (M, Y3, W - M, Y3) % (gtext, mtext))
+    cols = ''
     heads, grid = extra if extra else ((), [])
-    H = 80
-    lines = ''
     if heads and grid:
-        xs = (150, 208, 268)[3 - len(heads):]           # the shown columns, kept to the right
-        lines = ('<g font-size="10" fill="#b8c4d9">%s</g>' % ''.join('<text x="%d" y="%d">%s</text>' % (x, H + 14, h) for x, h in zip(xs, heads))
-                 ) + ''.join('<text x="14" y="%d" text-anchor="start">%s</text>' % (H + 34 + 18 * k, n) +
-                             ''.join('<text x="%d" y="%d">%s</text>' % (x, H + 34 + 18 * k, mk) for x, mk in zip(xs, marks))
-                             for k, (n, marks) in enumerate(grid))
-        H += 22 + 18 * len(grid)
-    svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="304" height="%d" role="img" aria-label="%%s">' % H +
-           '<title>%%s</title><clipPath id="r"><rect width="304" height="%d" rx="3"/></clipPath>' % H +
-           '<g clip-path="url(#r)"><rect width="304" height="%d" fill="#1a2233"/>' % H +
-           '<rect x="%d" y="26" width="%d" height="8" rx="2" fill="#ecc9b9"/>'
-           '<rect x="%d" y="26" width="%d" height="8" rx="2" fill="#c87053"/>%s'
+        xs = (170, 231, W - M - 19)[3 - len(heads):]    # the shown columns' centres, kept to the right: the last one ends on the right margin
+        yh = last + 28                                  # the columns' headings
+        cols = ('<g font-size="10" fill="#b8c4d9">%s</g>' % ''.join('<text x="%d" y="%d">%s</text>' % (x, yh, h) for x, h in zip(xs, heads))
+                ) + ''.join('<text x="%d" y="%d" text-anchor="start">%s</text>' % (M, yh + 20 + 18 * k, n) +
+                            ''.join('<text x="%d" y="%d">%s</text>' % (x, yh + 20 + 18 * k, mk) for x, mk in zip(xs, marks))
+                            for k, (n, marks) in enumerate(grid))
+        last = yh + 20 + 18 * (len(grid) - 1)
+    H = last + M + 3
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" role="img" aria-label="%%s">' % (W, H) +
+           '<title>%%s</title><clipPath id="r"><rect width="%d" height="%d" rx="3"/></clipPath>' % (W, H) +
+           '<g clip-path="url(#r)"><rect width="%d" height="%d" fill="#1a2233"/>' % (W, H) +
+           '<rect x="%d" y="%d" width="%d" height="10" rx="2" fill="#ecc9b9"/>'
+           '<rect x="%d" y="%d" width="%d" height="10" rx="2" fill="#c87053"/>%s'
            '</g>'
            '<g fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">'
-           '<text x="71" y="34">COVERED FUNCTIONS</text><text x="71" y="54">COVERED BYTES</text><text x="71" y="74">MATCHED BYTES</text>'
-           '<text x="278" y="34">%s</text><text x="278" y="54">%s</text><text x="278" y="74">%s</text>'
-           '<text x="152" y="14">TOTAL TEST COVERAGE: %s</text>' + lines + '</g></svg>\n'
-           ) % (title, title, X, bar, X, wd, strip, ftext, btext, mtext, gtext)
+           '<g font-size="12"><text x="%d" y="%d" text-anchor="start">%s FUNCTIONS</text><text x="%d" y="%d" text-anchor="start">%s BYTES</text></g><g font-size="11">'
+           '<text x="%d" y="%d" text-anchor="end">%s</text><text x="%d" y="%d" text-anchor="end">%s</text></g>%s%s</g></svg>\n'
+           ) % (title, title, X, Y1 - 10, bar, X, Y1 - 10, wd, strip, M, Y1, _w, M, Y2, _w, W - M, Y1, ftext, W - M, Y2, btext, sec, cols)
     import os as _os
     _os.makedirs(_os.path.dirname(path) or '.', exist_ok=True)
     try:
@@ -297,14 +300,12 @@ def write_badge(rows, label, path='badges/progress.svg', extra=()):
         readme = open('README.md').read()
         # the README's badge (an older name too: badge.svg, badges/regular, buildable or playable) becomes this one, with its numbers
         fresh = re.sub(r'\((badges/(?:regular|buildable|playable|progress)|badge)\.svg(\?[^)\s]*)?\)',
-                       lambda m: '(badges/progress.svg?p=%.1f&b=%s&m=%s&a=%d&s=%d)' % (done, btext.rstrip('%'), mtext.rstrip('%'),
-                                                                                  int(round(wavg)), len(reached)),
+                       lambda m: '(badges/progress.svg?p=%.1f&b=%s&a=%d&s=%d)' % (done, btext.rstrip('%'), int(round(wavg)), len(reached)),
                        readme, count=1)
         if fresh != readme:
             open('README.md', 'w').write(fresh)
     except (IOError, OSError):
         pass
-
 
 def statuses(path='status.txt'):
     """[(status, state)] or [(status, Flycast, Dreamcast, Native)] from status.txt, in its order: one status a line, "[x] NAME"
